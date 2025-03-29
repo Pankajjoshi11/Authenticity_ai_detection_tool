@@ -1,10 +1,11 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # Import CORS
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 from transformers import RobertaTokenizer, AutoModelForSequenceClassification
 import torch
-import os
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # ========== LOAD SUMMARIZATION MODEL ==========
 SUMMARIZATION_MODEL_PATH = "./model/ai_model"
@@ -33,7 +34,6 @@ except Exception as e:
 # ========== SUMMARIZATION ENDPOINT ==========
 @app.route("/summarize", methods=["POST"])
 def summarize_text():
-    """Summarizes input text."""
     if not summarizer:
         return jsonify({"error": "Summarization model not loaded"}), 500
 
@@ -49,7 +49,6 @@ def summarize_text():
 # ========== AI DETECTION ENDPOINT ==========
 @app.route("/detect", methods=["POST"])
 def detect_ai():
-    """Detects whether a given text is AI-generated or human-written."""
     if not ai_model:
         return jsonify({"error": "AI Detection model not loaded"}), 500
 
@@ -59,14 +58,35 @@ def detect_ai():
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
 
-    inputs = ai_tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
-    with torch.no_grad():
-        outputs = ai_model(**inputs)
-    logits = outputs.logits
-    prediction = torch.argmax(logits, dim=1).item()
-    
-    result = "AI-Generated" if prediction == 1 else "Human-Written"
-    return jsonify({"prediction": result})
+    sentences = text.split(". ")
+    ai_sentences = []
+
+    total_ai_score = 0
+    for sentence in sentences:
+        if not sentence.strip():
+            continue
+
+        inputs = ai_tokenizer(sentence, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = ai_model(**inputs)
+
+        logits = outputs.logits
+        probabilities = torch.nn.functional.softmax(logits, dim=1)
+        ai_score = probabilities[0][1].item() * 100
+
+        total_ai_score += ai_score
+        if ai_score > 50:
+            ai_sentences.append({"sentence": sentence, "ai_probability": f"{ai_score:.2f}%"})
+
+    avg_ai_score = total_ai_score / len(sentences) if sentences else 0
+
+    result = "AI-Generated" if avg_ai_score > 50 else "Human-Written"
+
+    return jsonify({
+        "prediction": result,
+        "ai_probability": f"{avg_ai_score:.2f}%",
+        "ai_detected_sentences": ai_sentences
+    })
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000)
