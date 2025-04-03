@@ -2,5 +2,5 @@ Flask
 torch
 transformers
 pandas
-sklearn
+scikit-learn
 datasets

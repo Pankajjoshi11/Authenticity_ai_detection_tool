@@ -2,12 +2,12 @@ import {
   isRouteErrorResponse,
   Links,
   Meta,
-  Outlet,
   Scripts,
   ScrollRestoration,
 } from "react-router";
 
 import type { Route } from "./+types/root";
+import { Outlet } from "react-router-dom"; // Ensure proper routing works
 import "./app.css";
 
 export const links: Route.LinksFunction = () => [
@@ -19,7 +19,7 @@ export const links: Route.LinksFunction = () => [
   },
   {
     rel: "stylesheet",
-    href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
+    href: "https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap",
   },
 ];
 
@@ -33,9 +33,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body className="bg-gray-100 text-gray-900">
-        <div className="max-w-4xl mx-auto p-6">
-          {children}
-        </div>
+        <div className="w-[90vw] max-w-[1600px] mx-auto p-6">{children}</div>
         <ScrollRestoration />
         <Scripts />
       </body>
@@ -44,9 +42,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />;
+  return (
+    <Layout>
+      <Outlet /> {/* Keeps routing working without React Router UI */}
+    </Layout>
+  );
 }
 
+// Error Boundary remains unchanged
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   let message = "Oops!";
   let details = "An unexpected error occurred.";
