@@ -1,11 +1,9 @@
 import { useState } from "react";
 import Loading from "./Loading";
-import * as pdfjsLib from "pdfjs-dist";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const AIDetection = () => {
   const [text, setText] = useState("");
+  const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<{
     prediction?: string;
     ai_probability?: string;
@@ -14,125 +12,122 @@ const AIDetection = () => {
   const [loading, setLoading] = useState(false);
 
   const handleDetect = async () => {
-    if (!text.trim()) return alert("Please enter some text!");
+    if (!text.trim() && !file) {
+      return alert("Please enter text or upload a PDF!");
+    }
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5000/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+      let response;
+
+      if (file) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        response = await fetch("http://127.0.0.1:5000/detect", {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        response = await fetch("http://127.0.0.1:5000/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+      }
 
       const data = await response.json();
       setResult(data);
     } catch (error) {
       console.error("Error:", error);
       alert("AI Detection failed.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const handlePDFUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const typedarray = new Uint8Array(reader.result as ArrayBuffer);
-      const pdf = await pdfjsLib.getDocument(typedarray).promise;
-
-      let extractedText = "";
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        const page = await pdf.getPage(pageNum);
-        const content = await page.getTextContent();
-        const pageText = content.items.map((item: any) => item.str).join(" ");
-        extractedText += pageText + "\n";
-      }
-
-      setText(extractedText);
-    };
-
-    reader.readAsArrayBuffer(file);
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile && selectedFile.type !== "application/pdf") {
+      alert("Only PDF files are allowed.");
+      return;
+    }
+    setFile(selectedFile || null);
+    setText(""); // Clear text if file is selected
   };
 
   return (
-    <div className="p-6 bg-white rounded-lg shadow-md max-w-3xl mx-auto">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">
-        AI Text Detection
-      </h2>
+    <div className="p-4 bg-gray-100 rounded-lg shadow">
+      <h2 className="text-lg font-bold">AI Text Detection</h2>
 
-      {/* Upload Button */}
-      <div className="flex justify-between items-center mb-3">
-        <label
-          htmlFor="pdf-upload"
-          className="text-sm text-white bg-black hover:bg-gray-800 px-4 py-2 rounded cursor-pointer transition"
-        >
-          Upload PDF
-        </label>
+      <textarea
+        className="w-full p-2 mt-2 border rounded"
+        rows={4}
+        placeholder="Enter text to check..."
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setFile(null); // Clear file if text is typed
+        }}
+        disabled={!!file}
+      />
+
+      <div className="mt-2">
         <input
           type="file"
-          id="pdf-upload"
-          accept="application/pdf"
-          onChange={handlePDFUpload}
-          className="hidden"
+          accept=".pdf"
+          onChange={handleFileChange}
+          className="block w-full text-sm text-gray-700
+            file:mr-4 file:py-2 file:px-4
+            file:rounded file:border-0
+            file:text-sm file:font-semibold
+            file:bg-blue-50 file:text-blue-700
+            hover:file:bg-blue-100"
         />
       </div>
 
-      {/* Textarea */}
-      <textarea
-        className="w-full p-3 border border-gray-300 rounded mb-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-        rows={6}
-        placeholder="Enter or paste text to check..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-
-      {/* Submit Button */}
       <button
-        className="w-full py-2 text-white bg-blue-500 hover:bg-blue-600 rounded transition"
+        className="px-4 py-2 mt-3 text-white bg-blue-500 rounded hover:bg-blue-600"
         onClick={handleDetect}
         disabled={loading}
       >
         {loading ? "Analyzing..." : "Check AI Content"}
       </button>
 
-      {/* Loading Spinner */}
       {loading && (
-        <div className="flex justify-center mt-4">
+        <div className="flex justify-center mt-2">
           <Loading />
         </div>
       )}
 
-      {/* Results Display */}
       {result && (
-        <div className="mt-6 p-4 bg-gray-50 border rounded">
-          <p className="mb-2">
+        <div className="mt-4 p-3 bg-white border rounded">
+          <p>
             <strong>Prediction:</strong> {result?.prediction || "N/A"}
           </p>
-          <p className="mb-2">
+          <p>
             <strong>AI Probability:</strong>{" "}
-            <span className="text-blue-600 font-medium">
+            <span className="text-blue-500 font-semibold">
               {result?.ai_probability || "N/A"}
             </span>
           </p>
 
           {result?.ai_detected_sentences?.length ? (
-            <div className="mt-3 bg-red-50 border-l-4 border-red-400 p-3 rounded">
-              <h3 className="text-red-600 font-semibold mb-2">
+            <div className="mt-2 p-2 bg-red-50 border-l-4 border-red-500 rounded">
+              <h3 className="text-red-600 font-semibold">
                 AI-Generated Sentences
               </h3>
-              <ul className="list-disc ml-5 space-y-1 text-gray-700 text-sm">
-                {result?.ai_detected_sentences.map((item, idx) => (
-                  <li key={idx}>
-                    <span className="font-medium">{item.sentence}</span> –{" "}
+              <ul className="list-disc ml-5 mt-1 text-gray-700">
+                {result?.ai_detected_sentences?.map((item, index) => (
+                  <li key={index}>
+                    <span className="font-medium">{item.sentence}</span> -{" "}
                     <span className="text-red-500">{item.ai_probability}</span>
                   </li>
                 ))}
               </ul>
             </div>
           ) : (
-            <p className="text-green-600 mt-2 text-sm">
+            <p className="text-green-600 mt-2">
               No AI-generated content detected.
             </p>
           )}
