@@ -1,24 +1,35 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, pipeline
 from transformers import RobertaTokenizer, AutoModelForSequenceClassification
 import torch
 import fitz  # PyMuPDF for PDF text extraction
+import pickle
+import nltk
+import numpy as np
+from nltk.tokenize import sent_tokenize
+from sklearn.cluster import KMeans
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-# ========== LOAD SUMMARIZATION MODEL ==========
-SUMMARIZATION_MODEL_PATH = "./model/ai_model"
+# Download NLTK resources
+nltk.download('punkt_tab')
+nltk.download('stopwords')
+
+# ========== LOAD TF-IDF SUMMARIZATION MODEL ==========
+SUMMARIZATION_MODEL_PATH = "./model/text_summarizer/tfidf_summarizer_model_final.pkl"
 
 try:
-    summarization_model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARIZATION_MODEL_PATH)
-    summarization_tokenizer = AutoTokenizer.from_pretrained(SUMMARIZATION_MODEL_PATH)
-    summarizer = pipeline("summarization", model=summarization_model, tokenizer=summarization_tokenizer)
-    print("✅ Summarization model loaded successfully!")
+    def load_model(filename=SUMMARIZATION_MODEL_PATH):
+        with open(filename, "rb") as f:
+            model = pickle.load(f)
+        return model['vectorizer'], model['kmeans']
+    
+    vectorizer, kmeans = load_model()
+    print("✅ TF-IDF Summarization model loaded successfully!")
 except Exception as e:
-    print("❌ Error loading summarization model:", str(e))
-    summarizer = None
+    print("❌ Error loading TF-IDF summarization model:", str(e))
+    vectorizer, kmeans = None, None
 
 # ========== LOAD AI DETECTION MODEL ==========
 AI_DETECTION_MODEL_PATH = "./model/ai_detection"
@@ -43,11 +54,37 @@ def extract_text_from_pdf(file):
         print("❌ PDF extraction error:", str(e))
     return text.strip()
 
+# ========== TF-IDF SUMMARIZATION FUNCTION ==========
+def summarize_text(text, vectorizer, kmeans, summary_ratio=0.25):
+    sentences = sent_tokenize(text)
+    if not sentences:
+        return []
+    
+    X = vectorizer.transform(sentences).toarray()
+    num_sentences = max(1, int(len(sentences) * summary_ratio))
+    
+    if len(kmeans.cluster_centers_) != num_sentences:
+        kmeans = KMeans(n_clusters=num_sentences, random_state=0, n_init='auto').fit(X)
+    
+    summary_sentences = []
+    for i in range(num_sentences):
+        cluster_indices = np.where(kmeans.labels_ == i)[0]
+        if len(cluster_indices) == 0:
+            continue
+        closest_index = min(
+            cluster_indices,
+            key=lambda idx: np.linalg.norm(X[idx] - kmeans.cluster_centers_[i])
+        )
+        summary_sentences.append((closest_index, sentences[closest_index]))
+
+    summary_sentences.sort()
+    return [sent.strip().capitalize() for idx, sent in summary_sentences]
+
 # ========== SUMMARIZATION ENDPOINT ==========
 @app.route("/summarize", methods=["POST"])
-def summarize_text():
-    if not summarizer:
-        return jsonify({"error": "Summarization model not loaded"}), 500
+def summarize_text_endpoint():
+    if vectorizer is None or kmeans is None:
+        return jsonify({"error": "TF-IDF Summarization model not loaded"}), 500
 
     # Handle PDF upload
     if "file" in request.files:
@@ -61,8 +98,10 @@ def summarize_text():
         return jsonify({"error": "No text provided"}), 400
 
     try:
-        summary = summarizer(text, max_length=150, min_length=50, do_sample=False)
-        return jsonify({"summary": summary[0]["summary_text"]})
+        summary = summarize_text(text, vectorizer, kmeans, summary_ratio=0.25)
+        # Join sentences into a single string to match original endpoint's response format
+        summary_text = " ".join(summary)
+        return jsonify({"summary": summary_text})
     except Exception as e:
         return jsonify({"error": f"Summarization failed: {str(e)}"}), 500
 
