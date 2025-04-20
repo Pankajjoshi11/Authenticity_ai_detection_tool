@@ -3,16 +3,17 @@ import type { Route } from "./+types/home";
 import Summarization from "../components/Summarization";
 import AIDetection from "../components/AIDetection";
 import Report from "../components/Report";
+import CheckGrammar from "~/components/CheckGrammar";
 
 export function meta({}: Route.MetaArgs) {
   return [
     { title: "AI Processing App" },
-    { name: "description", content: "Summarization and AI Detection in React" },
+    { name: "description", content: "Summarization, AI Detection, and Grammar Checking in React" },
   ];
 }
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<"summarization" | "ai-detection">(
+  const [activeTab, setActiveTab] = useState<"summarization" | "ai-detection" | "grammar-check">(
     "summarization"
   );
   const [report, setReport] = useState(null);
@@ -30,7 +31,7 @@ export default function Home() {
           AI-Powered Text Processing
         </h2>
         <p className="text-lg text-gray-600 mt-4">
-          Summarize and analyze text with advanced AI models.
+          Summarize, analyze, and check grammar with advanced AI models.
         </p>
       </section>
 
@@ -56,11 +57,27 @@ export default function Home() {
         >
           AI Detection
         </button>
+        <button
+          className={`px-6 py-2 text-lg font-medium rounded-full transition ${
+            activeTab === "grammar-check"
+              ? "bg-black text-white shadow-lg"
+              : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+          }`}
+          onClick={() => setActiveTab("grammar-check")}
+        >
+          Grammar Check
+        </button>
       </div>
 
       {/* 🔹 Content Section */}
       <div className="w-full max-w-3xl mt-12 px-6">
-        {activeTab === "summarization" ? <Summarization /> : <AIDetection />}
+        {activeTab === "summarization" ? (
+          <Summarization />
+        ) : activeTab === "ai-detection" ? (
+          <AIDetection />
+        ) : (
+          <CheckGrammar />
+        )}
       </div>
 
       {/* 🔹 Report Section (Only If Available) */}
@@ -72,7 +89,7 @@ export default function Home() {
 
       {/* 🔹 Footer */}
       <footer className="w-full max-w-6xl text-center mt-20 py-6 text-gray-500 text-sm">
-        &copy; {new Date().getFullYear()} AI Processing App. All rights reserved.
+        © {new Date().getFullYear()} AI Processing App. All rights reserved.
       </footer>
     </div>
   );

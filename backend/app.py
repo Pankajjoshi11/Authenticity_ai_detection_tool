@@ -48,8 +48,8 @@ except Exception as e:
     ai_model = None
 
 # ========== LOAD GRAMMAR CHECK MODELS ==========
-LOGISTIC_MODEL_PATH = "./model/grammar/grammar_model_lr.pkl"
-VECTORIZER_PATH = "./model/grammar/grammar_vectorizer.pkl"
+LOGISTIC_MODEL_PATH = "./model/grammar/model/logistic_regression_model.pkl"
+VECTORIZER_PATH = "./model/grammar/model/tfidf_vectorizer.pkl"
 
 try:
     if not os.path.exists(LOGISTIC_MODEL_PATH):
