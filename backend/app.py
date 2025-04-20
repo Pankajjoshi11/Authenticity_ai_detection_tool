@@ -9,12 +9,19 @@ from nltk.tokenize import sent_tokenize
 from sklearn.cluster import KMeans
 import fitz  # PyMuPDF for PDF text extraction
 import re
+from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import os
+import PyMongo
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
+try:
+    mongo = PyMongo(app, app.config['mongodb+srv://kuwarsarthak711:NqNS3a5sKP6EhtCC@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority'])
+    print(f"Connected to MongoDB ")
+except Exception as e:
+    print(f"Error connecting to MongoDB: {e}")
 
 # Download NLTK resources
 nltk.download('punkt_tab')
@@ -281,6 +288,70 @@ def check_grammar_endpoint():
         return jsonify(response)
     except Exception as e:
         return jsonify({"error": f"Grammar check failed: {str(e)}"}), 500
+    
+def query_database(user_text):
+    try:
+        vocab_doc = mongo.db.vocab.find_one()
+        if not vocab_doc:
+            raise Exception("No vocabulary found in DB.")
+
+        vocab = pickle.loads(vocab_doc['vocabulary'])
+        vectorizer = TfidfVectorizer(stop_words='english', vocabulary=vocab)
+        user_vector = vectorizer.fit_transform([user_text])
+
+        collection = mongo.db.paragraphs
+        results = collection.find()
+
+        similarities = []
+        for result in results:
+            paragraph_id = result['_id']
+            paragraph = result['paragraph']
+            vector_blob = result['tfidf_vector']
+
+            stored_vector = pickle.loads(vector_blob)
+
+            try:
+                similarity = cosine_similarity(user_vector, stored_vector)
+                similarities.append((paragraph_id, paragraph, result['url'], similarity[0][0]))
+            except Exception as e:
+                print(f"Error calculating similarity: {e}")
+                continue
+
+        similarities.sort(key=lambda x: x[3], reverse=True)
+        return similarities
+    except Exception as e:
+        print(f"Error querying database: {e}")
+        return []
+    
+@app.route('/query', methods=['POST'])
+def query_paper():
+    try:
+        data = request.json
+        user_text = data.get('text') if data else None
+        file = request.files.get('file')
+
+        # If a file is uploaded, extract its text content
+        if file:
+            user_text = extract_text_from_pdf(file)
+        
+        # If there's no text provided, return an error
+        if not user_text:
+            return jsonify({"error": "No text or file provided"}), 400
+
+        similar_paragraphs = query_database(user_text)
+        result = []
+
+        for para in similar_paragraphs:
+            _, _, url, similarity = para
+            similarity_percent = round(float(similarity) * 100, 2)  # Convert to percentage
+            result.append({
+                "url": url,
+                "similarity": similarity_percent
+            })
+
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": f"Error processing query: {str(e)}"}), 500
 
 # ========== MAIN ==========
 if __name__ == "__main__":
