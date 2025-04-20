@@ -13,38 +13,38 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import os
-import PyMongo
+from flask_pymongo import PyMongo
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
 try:
-    mongo = PyMongo(app, app.config['mongodb+srv://kuwarsarthak711:NqNS3a5sKP6EhtCC@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority'])
-    print(f"Connected to MongoDB ")
+    app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+    mongo = PyMongo(app)
+    print(f"Connected to MongoDB")
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
 
-# Download NLTK resources
 nltk.download('punkt_tab')
 nltk.download('stopwords')
 
-# ========== LOAD TF-IDF SUMMARIZATION MODEL ==========
+# Load TF-IDF Summarization Model
 SUMMARIZATION_MODEL_PATH = "./model/text_summarizer/tfidf_summarizer_model_final.pkl"
-
 try:
     def load_model(filename=SUMMARIZATION_MODEL_PATH):
         with open(filename, "rb") as f:
             model = pickle.load(f)
         return model['vectorizer'], model['kmeans']
-    
     vectorizer, kmeans = load_model()
     print("✅ TF-IDF Summarization model loaded successfully!")
 except Exception as e:
     print("❌ Error loading TF-IDF summarization model:", str(e))
     vectorizer, kmeans = None, None
 
-# ========== LOAD AI DETECTION MODEL ==========
+# Load AI Detection Model
 AI_DETECTION_MODEL_PATH = "./model/ai_detection"
-
 try:
     ai_tokenizer = RobertaTokenizer.from_pretrained(AI_DETECTION_MODEL_PATH)
     ai_model = AutoModelForSequenceClassification.from_pretrained(AI_DETECTION_MODEL_PATH)
@@ -54,10 +54,9 @@ except Exception as e:
     print("❌ Error loading AI detection model:", str(e))
     ai_model = None
 
-# ========== LOAD GRAMMAR CHECK MODELS ==========
+# Load Grammar Check Models
 LOGISTIC_MODEL_PATH = "./model/grammar/model/logistic_regression_model.pkl"
 VECTORIZER_PATH = "./model/grammar/model/tfidf_vectorizer.pkl"
-
 try:
     if not os.path.exists(LOGISTIC_MODEL_PATH):
         raise FileNotFoundError(f"Logistic Regression model file not found at {LOGISTIC_MODEL_PATH}")
@@ -66,8 +65,6 @@ try:
     print("✅ Logistic Regression model loaded successfully!")
 except Exception as e:
     print(f"❌ Error loading Logistic Regression model: {str(e)}")
-    print(f"File path checked: {LOGISTIC_MODEL_PATH}")
-    print(f"File exists: {os.path.exists(LOGISTIC_MODEL_PATH)}")
     grammar_model = None
 
 try:
@@ -75,17 +72,14 @@ try:
         raise FileNotFoundError(f"TfidfVectorizer file not found at {VECTORIZER_PATH}")
     with open(VECTORIZER_PATH, "rb") as f:
         grammar_vectorizer = pickle.load(f)
-    # Verify vectorizer is fitted
     if not hasattr(grammar_vectorizer, 'vocabulary_'):
         raise ValueError("Loaded TfidfVectorizer is not fitted")
     print("✅ TfidfVectorizer loaded successfully!")
 except Exception as e:
     print(f"❌ Error loading TfidfVectorizer: {str(e)}")
-    print(f"File path checked: {VECTORIZER_PATH}")
-    print(f"File exists: {os.path.exists(VECTORIZER_PATH)}")
     grammar_vectorizer = None
 
-# ========== PDF TEXT EXTRACTION ==========
+# PDF Text Extraction
 def extract_text_from_pdf(file):
     text = ""
     try:
@@ -96,18 +90,15 @@ def extract_text_from_pdf(file):
         print("❌ PDF extraction error:", str(e))
     return text.strip()
 
-# ========== TF-IDF SUMMARIZATION FUNCTION ==========
+# TF-IDF Summarization Function
 def summarize_text(text, vectorizer, kmeans, summary_ratio=0.25):
     sentences = sent_tokenize(text)
     if not sentences:
         return []
-    
     X = vectorizer.transform(sentences).toarray()
     num_sentences = max(1, int(len(sentences) * summary_ratio))
-    
     if len(kmeans.cluster_centers_) != num_sentences:
         kmeans = KMeans(n_clusters=num_sentences, random_state=0, n_init='auto').fit(X)
-    
     summary_sentences = []
     for i in range(num_sentences):
         cluster_indices = np.where(kmeans.labels_ == i)[0]
@@ -118,139 +109,111 @@ def summarize_text(text, vectorizer, kmeans, summary_ratio=0.25):
             key=lambda idx: np.linalg.norm(X[idx] - kmeans.cluster_centers_[i])
         )
         summary_sentences.append((closest_index, sentences[closest_index]))
-
     summary_sentences.sort()
     return [sent.strip().capitalize() for idx, sent in summary_sentences]
 
-# ========== BASIC RULE-BASED GRAMMAR CHECKS ==========
+# Grammar Check Functions
 def is_grammatically_incorrect(sentence):
-    # Check for 'dont' instead of 'don't'
     if re.search(r"\b(?<!\w)dont(?!\w)\b", sentence):
         return True
-    # Check for subject-verb agreement errors (e.g., "he don't" instead of "he doesn't")
     if re.search(r"\b(?:he|she|it|Rahul|John|Mary)\b\s+(?:dont|don't|doesn't|isn't|are|were)\b", sentence):
         return True
-    # Check for incorrect reflexive pronouns like 'myself' when they should be 'I' or 'me'
     if re.search(r"\bmyself\b", sentence) and not re.search(r"Rahul and myself", sentence):
         return True
-    # Check for 'goes' instead of 'go'
     if re.search(r"\bgoes\b", sentence) and not re.search(r"can't go", sentence):
         return True
-    # Check for incorrect use of plural verbs (e.g., "loves" instead of "love")
     if re.search(r"\bloves\b", sentence) and not re.search(r"\bthey\b", sentence):
         return True
-    # Check for subject-verb agreement (plural vs singular)
     if re.search(r"\bwe\b\s+has\b", sentence):
         return True
-    # Check for incorrect verb form (e.g., "can't goes" instead of "can't go")
     if re.search(r"\bcan't goes\b", sentence):
         return True
-    # Check for "don't" with singular subjects where "doesn't" should be used (e.g., "he don't")
     if re.search(r"\bhe don't\b", sentence):
         return True
-    # Check for "She don't" (incorrect subject-verb agreement)
     if re.search(r"\bShe don't\b", sentence):
         return True
-    # Check for "Rahul and myself" (incorrect reflexive pronoun usage)
     if re.search(r"Rahul and myself", sentence):
         return True
     return False
 
-# ========== GRAMMAR CHECK FUNCTION ==========
 def check_grammar(text, vectorizer, model):
     sentences = sent_tokenize(text)
     incorrect_sentences = []
     ml_errors = []
-
     for sentence in sentences:
-        # Remove leading/trailing spaces and check for grammar
         sentence = sentence.strip()
         if not sentence:
             continue
-
-        # Rule-based grammar check
         if is_grammatically_incorrect(sentence):
             incorrect_sentences.append(sentence)
         else:
-            # Machine learning-based grammar check
             try:
                 if not hasattr(vectorizer, 'vocabulary_'):
                     raise ValueError("TfidfVectorizer is not fitted")
                 sentence_vec = vectorizer.transform([sentence])
                 prediction = model.predict(sentence_vec)
-                if prediction == 0:  # 0 means grammatically incorrect
+                if prediction == 0:
                     incorrect_sentences.append(sentence)
             except Exception as e:
                 ml_errors.append(f"ML prediction error for sentence '{sentence}': {str(e)}")
-
     return incorrect_sentences, ml_errors
 
-# ========== SUMMARIZATION ENDPOINT ==========
+# Endpoints
 @app.route("/summarize", methods=["POST"])
 def summarize_text_endpoint():
     if vectorizer is None or kmeans is None:
         return jsonify({"error": "TF-IDF Summarization model not loaded"}), 500
-
-    # Handle PDF upload
     if "file" in request.files:
         file = request.files["file"]
         text = extract_text_from_pdf(file)
     else:
-        data = request.get_json()
-        text = data.get("text", "")
-
+        try:
+            data = request.get_json()
+            text = data.get("text", "")
+        except Exception as e:
+            return jsonify({"error": f"Invalid JSON data: {str(e)}"}), 400
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
-
     try:
         summary = summarize_text(text, vectorizer, kmeans, summary_ratio=0.25)
-        # Join sentences into a single string to match original endpoint's response format
         summary_text = " ".join(summary)
         return jsonify({"summary": summary_text})
     except Exception as e:
         return jsonify({"error": f"Summarization failed: {str(e)}"}), 500
 
-# ========== AI DETECTION ENDPOINT ==========
 @app.route("/detect", methods=["POST"])
 def detect_ai():
     if not ai_model:
         return jsonify({"error": "AI Detection model not loaded"}), 500
-
-    # Handle PDF upload
     if "file" in request.files:
         file = request.files["file"]
         text = extract_text_from_pdf(file)
     else:
-        data = request.get_json()
-        text = data.get("text", "")
-
+        try:
+            data = request.get_json()
+            text = data.get("text", "")
+        except Exception as e:
+            return jsonify({"error": f"Invalid JSON data: {str(e)}"}), 400
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
-
     sentences = text.split(". ")
     ai_sentences = []
     total_ai_score = 0
-
     try:
         for sentence in sentences:
             if not sentence.strip():
                 continue
-
             inputs = ai_tokenizer(sentence, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
             with torch.no_grad():
                 outputs = ai_model(**inputs)
-
             logits = outputs.logits
             probabilities = torch.nn.functional.softmax(logits, dim=1)
             ai_score = probabilities[0][1].item() * 100
-
             total_ai_score += ai_score
             if ai_score > 50:
                 ai_sentences.append({"sentence": sentence, "ai_probability": f"{ai_score:.2f}%"})
-
         avg_ai_score = total_ai_score / len(sentences) if sentences else 0
         result = "AI-Generated" if avg_ai_score > 50 else "Human-Written"
-
         return jsonify({
             "prediction": result,
             "ai_probability": f"{avg_ai_score:.2f}%",
@@ -259,23 +222,21 @@ def detect_ai():
     except Exception as e:
         return jsonify({"error": f"AI Detection failed: {str(e)}"}), 500
 
-# ========== GRAMMAR CHECK ENDPOINT ==========
 @app.route("/check-grammar", methods=["POST"])
 def check_grammar_endpoint():
     if grammar_model is None or grammar_vectorizer is None:
         return jsonify({"error": "Grammar check models not loaded"}), 500
-
-    # Handle PDF upload
     if "file" in request.files:
         file = request.files["file"]
         text = extract_text_from_pdf(file)
     else:
-        data = request.get_json()
-        text = data.get("text", "")
-
+        try:
+            data = request.get_json()
+            text = data.get("text", "")
+        except Exception as e:
+            return jsonify({"error": f"Invalid JSON data: {str(e)}"}), 400
     if not text.strip():
         return jsonify({"error": "No text provided"}), 400
-
     try:
         incorrect_sentences, ml_errors = check_grammar(text, grammar_vectorizer, grammar_model)
         response = {
@@ -288,77 +249,74 @@ def check_grammar_endpoint():
         return jsonify(response)
     except Exception as e:
         return jsonify({"error": f"Grammar check failed: {str(e)}"}), 500
-    
+
 def query_database(user_text):
     try:
         vocab_doc = mongo.db.vocab.find_one()
+        print(f"Vocab doc: {vocab_doc}")
         if not vocab_doc:
             raise Exception("No vocabulary found in DB.")
-
-        vocab = pickle.loads(vocab_doc['vocabulary'])
+        try:
+            vocab = pickle.loads(vocab_doc['vocabulary'])
+            print(f"Loaded vocabulary: {vocab}")
+            if not isinstance(vocab, dict):
+                raise ValueError("Loaded vocabulary is not a dictionary.")
+            if not vocab:
+                raise ValueError("Vocabulary is empty.")
+        except Exception as e:
+            raise Exception(f"Failed to load vocabulary: {str(e)}")
         vectorizer = TfidfVectorizer(stop_words='english', vocabulary=vocab)
-        user_vector = vectorizer.fit_transform([user_text])
-
+        print(f"Vectorizer vocabulary_: {getattr(vectorizer, 'vocabulary_', 'Not fitted')}")
+        if not hasattr(vectorizer, 'vocabulary_'):
+            raise Exception("TF-IDF vectorizer is not fitted after initialization.")
+        user_vector = vectorizer.transform([user_text])
         collection = mongo.db.paragraphs
         results = collection.find()
-
         similarities = []
         for result in results:
             paragraph_id = result['_id']
             paragraph = result['paragraph']
             vector_blob = result['tfidf_vector']
-
-            stored_vector = pickle.loads(vector_blob)
-
             try:
+                stored_vector = pickle.loads(vector_blob)
                 similarity = cosine_similarity(user_vector, stored_vector)
                 similarities.append((paragraph_id, paragraph, result['url'], similarity[0][0]))
             except Exception as e:
-                print(f"Error calculating similarity: {e}")
+                print(f"Error calculating similarity for paragraph {paragraph_id}: {e}")
                 continue
-
         similarities.sort(key=lambda x: x[3], reverse=True)
         return similarities
     except Exception as e:
         print(f"Error querying database: {e}")
         return []
-    
+
 @app.route('/query', methods=['POST'])
 def query_paper():
     try:
-        data = request.json
-        user_text = data.get('text') if data else None
-        file = request.files.get('file')
-
-        # If a file is uploaded, extract its text content
-        if file:
+        user_text = None
+        if 'file' in request.files:
+            file = request.files['file']
             user_text = extract_text_from_pdf(file)
-        
-        # If there's no text provided, return an error
+        else:
+            try:
+                data = request.get_json()
+                user_text = data.get('text', '')
+            except Exception as e:
+                return jsonify({"error": f"Invalid JSON data: {str(e)}"}), 400
         if not user_text:
             return jsonify({"error": "No text or file provided"}), 400
-
         similar_paragraphs = query_database(user_text)
         result = []
-
         for para in similar_paragraphs:
             _, _, url, similarity = para
-            similarity_percent = round(float(similarity) * 100, 2)  # Convert to percentage
+            similarity_percent = round(float(similarity) * 100, 2)
             result.append({
                 "url": url,
                 "similarity": similarity_percent
             })
-
         return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": f"Error processing query: {str(e)}"}), 500
 
-# ========== MAIN ==========
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000)
-
-
-
-
-
-# add the dataset abd retrain the tfidf jorden model
