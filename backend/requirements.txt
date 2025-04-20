@@ -1,6 +1,9 @@
-Flask
-torch
+flask
+flask-cors
 transformers
-pandas
+torch
+nltk
+numpy
 scikit-learn
-datasets
+pymupdf
+pymongo

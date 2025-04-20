@@ -7,18 +7,20 @@ import nltk
 import numpy as np
 from nltk.tokenize import sent_tokenize
 from sklearn.cluster import KMeans
-import fitz  # PyMuPDF for PDF text extraction
+import  fitz  # PyMuPDF for PDF text extraction
 import re
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import os
-import PyMongo
+from flask_pymongo import PyMongo
+
 
 app = Flask(__name__)
+app.config["MONGO_URI"] = "mongodb+srv://kuwarsarthak711:NqNS3a5sKP6EhtCC@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority"
 CORS(app)  # Enable CORS for all routes
 try:
-    mongo = PyMongo(app, app.config['mongodb+srv://kuwarsarthak711:NqNS3a5sKP6EhtCC@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority'])
+    mongo = PyMongo(app)
     print(f"Connected to MongoDB ")
 except Exception as e:
     print(f"Error connecting to MongoDB: {e}")
@@ -306,22 +308,34 @@ def query_database(user_text):
         for result in results:
             paragraph_id = result['_id']
             paragraph = result['paragraph']
+            url = result['url']
             vector_blob = result['tfidf_vector']
 
             stored_vector = pickle.loads(vector_blob)
 
             try:
-                similarity = cosine_similarity(user_vector, stored_vector)
-                similarities.append((paragraph_id, paragraph, result['url'], similarity[0][0]))
+                similarity = cosine_similarity(user_vector, stored_vector)[0][0]
+                similarities.append((paragraph_id, paragraph, url, similarity))
             except Exception as e:
                 print(f"Error calculating similarity: {e}")
                 continue
 
-        similarities.sort(key=lambda x: x[3], reverse=True)
-        return similarities
+        # Keep only the most similar paragraph per unique URL
+        url_to_best_match = {}
+        for sim in similarities:
+            url = sim[2]
+            if url not in url_to_best_match or sim[3] > url_to_best_match[url][3]:
+                url_to_best_match[url] = sim
+
+        # Convert the dict back to a list sorted by similarity
+        unique_results = sorted(url_to_best_match.values(), key=lambda x: x[3], reverse=True)
+
+        return unique_results
+
     except Exception as e:
         print(f"Error querying database: {e}")
         return []
+
     
 @app.route('/query', methods=['POST'])
 def query_paper():
@@ -343,13 +357,18 @@ def query_paper():
 
         for para in similar_paragraphs:
             _, _, url, similarity = para
-            similarity_percent = round(float(similarity) * 100, 2)  # Convert to percentage
-            result.append({
-                "url": url,
-                "similarity": similarity_percent
-            })
+            similarity_percent = round(float(similarity) * 100, 2)
+            if similarity_percent > 0:
+                result.append({
+                    "url": url,
+                    "similarity": similarity_percent
+                })
+
+        if not result:
+            return jsonify({"message": "No plagiarism found."}), 200
 
         return jsonify(result), 200
+
     except Exception as e:
         return jsonify({"error": f"Error processing query: {str(e)}"}), 500
 
