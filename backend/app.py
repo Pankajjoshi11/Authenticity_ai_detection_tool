@@ -332,12 +332,11 @@ def query_paper():
             file = request.files['file']
             if file.filename == '':
                 return jsonify({"error": "No file selected"}), 400
+            if file.mimetype != 'application/pdf':
+                return jsonify({"error": "Only PDF files are allowed"}), 400
             
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(file.filename))
-            file.save(filepath)
-            with open(filepath, 'r', encoding='utf-8') as f:
-                user_text = f.read()
-            os.remove(filepath)
+            # Extract text directly from PDF in memory
+            user_text = extract_text_from_pdf(file)
         else:
             data = request.get_json()
             user_text = data.get('text', '')
@@ -347,7 +346,6 @@ def query_paper():
         
         results = query_database(user_text)
         
-        # Simplified response with only plagiarism status and top URLs
         if not results:
             return jsonify({
                 "plagiarism_found": False,
@@ -368,6 +366,8 @@ def query_paper():
             ]
         })
         
+    except Exception as e:
+        return jsonify({"error": f"Failed to process request: {str(e)}"}), 500        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     

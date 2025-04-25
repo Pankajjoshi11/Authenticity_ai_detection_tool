@@ -24,7 +24,7 @@ export default function Home() {
     <div className="w-full min-h-screen bg-white text-gray-900 flex flex-col items-center">
       {/* 🔹 Navbar */}
       <header className="w-full max-w-6xl flex justify-between items-center py-6 px-8" role="banner">
-        <h1 className="text-2xl font-semibold tracking-wide">AI Processing</h1>
+        <h1 className="text-2xl font-semibold tracking-wide">Authenticity</h1>
       </header>
 
       {/* 🔹 Hero Section */}
