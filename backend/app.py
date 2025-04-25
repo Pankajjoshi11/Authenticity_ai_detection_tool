@@ -4,6 +4,7 @@ from transformers import RobertaTokenizer, AutoModelForSequenceClassification
 import torch
 import pickle
 import nltk
+from werkzeug.utils import secure_filename
 import numpy as np
 from nltk.tokenize import sent_tokenize
 from sklearn.cluster import KMeans
@@ -250,89 +251,125 @@ def check_grammar_endpoint():
 
 def query_database(user_text):
     try:
+        # Load vectorizer data
         vocab_doc = mongo.db.vocab.find_one()
-        print(f"Vocab doc: {vocab_doc}")
         if not vocab_doc:
-            raise Exception("No vocabulary found in DB.")
-        try:
-            vocab = pickle.loads(vocab_doc['vocabulary'])
-            print(f"Loaded vocabulary: {vocab}")
-            if not isinstance(vocab, dict):
-                raise ValueError("Loaded vocabulary is not a dictionary.")
-            if not vocab:
-                raise ValueError("Vocabulary is empty.")
-        except Exception as e:
-            raise Exception(f"Failed to load vocabulary: {str(e)}")
-        vectorizer = TfidfVectorizer(stop_words='english', vocabulary=vocab)
-        print(f"Vectorizer vocabulary_: {getattr(vectorizer, 'vocabulary_', 'Not fitted')}")
-        if not hasattr(vectorizer, 'vocabulary_'):
-            raise Exception("TF-IDF vectorizer is not fitted after initialization.")
+            raise ValueError("No vectorizer data found")
+        
+        vocab_data = pickle.loads(vocab_doc['vectorizer_data'])
+        
+        # Reconstruct the vectorizer EXACTLY as it was during storage
+        vectorizer = TfidfVectorizer(
+            stop_words='english',
+            vocabulary=vocab_data['vocabulary'],
+            lowercase=True,  # Must match storage parameters
+            token_pattern=r'(?u)\b\w\w+\b'  # Default token pattern
+        )
+        vectorizer.idf_ = vocab_data['idf']
+        
+        # Debug: Print vocabulary size
+        print(f"Vocabulary size: {len(vectorizer.vocabulary_)}")
+        
+        # Transform user text - ensure identical preprocessing
         user_vector = vectorizer.transform([user_text])
-        collection = mongo.db.paragraphs
-        results = collection.find()
+        print(f"User vector shape: {user_vector.shape}")
+        
+        # Process all paragraphs
         similarities = []
-        for result in results:
-            paragraph_id = result['_id']
-            paragraph = result['paragraph']
-            url = result['url']
-            vector_blob = result['tfidf_vector']
+        para_count = 0
+        match_count = 0
+        
+        for para in mongo.db.paragraphs.find():
+            para_count += 1
             try:
+                # Reconstruct sparse vector
+                vec_data = pickle.loads(para['vector_data'])
+                stored_vector = type(user_vector)(
+                    (vec_data['data'], vec_data['indices'], vec_data['indptr']),
+                    shape=vec_data['shape']
+                )
+                
+                # Calculate similarity
                 similarity = cosine_similarity(user_vector, stored_vector)[0][0]
-                similarities.append((paragraph_id, paragraph, url, similarity))
+                
+                # Debug output
+                if similarity > 0.5:  # Temporary lower threshold for debugging
+                    print(f"Match found: {similarity:.2f} - {para['url']}")
+                    print(f"Stored text: {para['paragraph'][:50]}...")
+                    print(f"User text: {user_text[:50]}...")
+                    match_count += 1
+                
+                if similarity > 0.1:  # Your actual threshold
+                    similarities.append({
+                        "url": para['url'],
+                        "paragraph": para['paragraph'],
+                        "similarity": float(similarity)
+                    })
             except Exception as e:
-                print(f"Error calculating similarity for paragraph {paragraph_id}: {e}")
+                print(f"Error processing paragraph: {str(e)}")
                 continue
-
-        # Keep only the most similar paragraph per unique URL
-        url_to_best_match = {}
-        for sim in similarities:
-            url = sim[2]
-            if url not in url_to_best_match or sim[3] > url_to_best_match[url][3]:
-                url_to_best_match[url] = sim
-
-        # Convert the dict back to a list sorted by similarity
-        unique_results = sorted(url_to_best_match.values(), key=lambda x: x[3], reverse=True)
-
-        return unique_results
-
+        
+        print(f"Processed {para_count} paragraphs, found {match_count} potential matches")
+        
+        # Get best match per URL
+        best_matches = {}
+        for item in similarities:
+            url = item['url']
+            if url not in best_matches or item['similarity'] > best_matches[url]['similarity']:
+                best_matches[url] = item
+        
+        return sorted(best_matches.values(), key=lambda x: x['similarity'], reverse=True)
+    
     except Exception as e:
-        print(f"Error querying database: {e}")
+        print(f"Query error: {str(e)}")
         return []
 
     
 @app.route('/query', methods=['POST'])
 def query_paper():
     try:
-        user_text = None
         if 'file' in request.files:
             file = request.files['file']
-            user_text = extract_text_from_pdf(file)
+            if file.filename == '':
+                return jsonify({"error": "No file selected"}), 400
+            
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(file.filename))
+            file.save(filepath)
+            with open(filepath, 'r', encoding='utf-8') as f:
+                user_text = f.read()
+            os.remove(filepath)
         else:
-            try:
-                data = request.get_json()
-                user_text = data.get('text', '')
-            except Exception as e:
-                return jsonify({"error": f"Invalid JSON data: {str(e)}"}), 400
-        if not user_text:
-            return jsonify({"error": "No text or file provided"}), 400
-        similar_paragraphs = query_database(user_text)
-        result = []
-        for para in similar_paragraphs:
-            _, _, url, similarity = para
-            similarity_percent = round(float(similarity) * 100, 2)
-            if similarity_percent > 0:
-                result.append({
-                    "url": url,
-                    "similarity": similarity_percent
-                })
-
-        if not result:
-            return jsonify({"message": "No plagiarism found."}), 200
-
-        return jsonify(result), 200
-
+            data = request.get_json()
+            user_text = data.get('text', '')
+        
+        if not user_text.strip():
+            return jsonify({"error": "No text provided"}), 400
+        
+        results = query_database(user_text)
+        
+        # Simplified response with only plagiarism status and top URLs
+        if not results:
+            return jsonify({
+                "plagiarism_found": False,
+                "message": "No plagiarism detected"
+            })
+        
+        # Get top 3 most similar sources
+        top_results = sorted(results, key=lambda x: x['similarity'], reverse=True)[:3]
+        
+        return jsonify({
+            "plagiarism_found": True,
+            "message": "Potential plagiarism detected",
+            "sources": [
+                {
+                    "url": r['url'],
+                    "similarity_score": round(r['similarity'] * 100, 1)
+                } for r in top_results
+            ]
+        })
+        
     except Exception as e:
-        return jsonify({"error": f"Error processing query: {str(e)}"}), 500
-
+        return jsonify({"error": str(e)}), 500
+    
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000)

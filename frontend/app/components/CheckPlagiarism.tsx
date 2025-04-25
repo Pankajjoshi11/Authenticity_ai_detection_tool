@@ -2,10 +2,7 @@ import { useState } from "react";
 
 const CheckPlagiarism = () => {
   const [text, setText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<{
-    url: string;
-  }[] | null>(null);
+  const [result, setResult] = useState<{ url: string }[] | null>(null);
   const [loading, setLoading] = useState(false);
 
   const handleCheckPlagiarism = async () => {
@@ -25,10 +22,10 @@ const CheckPlagiarism = () => {
 
       const data = await response.json();
 
-      if (response.ok) {
-        setResult(data);
+      if (response.ok && data.plagiarism_found) {
+        setResult(data.sources); // Just the URLs
       } else {
-        alert(data.error || "Failed to check plagiarism.");
+        setResult([]);
       }
     } catch (error) {
       console.error("Error:", error);
@@ -60,22 +57,19 @@ const CheckPlagiarism = () => {
 
       {result && (
         <div className="mt-4 p-3 bg-white border rounded">
-          <h3 className="text-md font-semibold">Plagiarism Results</h3>
+          <h3 className="text-md font-semibold">Plagiarism Sources</h3>
           {result.length > 0 ? (
-            <div>
-              <p className="mt-2 font-medium">Similar Sources:</p>
-              <ul className="list-disc pl-5 mt-1">
-                {result.map((item, index) => (
-                  <li key={index} className="text-gray-700">
-                    <a href={item.url} target="_blank" rel="noopener noreferrer">
-                      {item.url}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <ul className="list-disc pl-5 mt-2">
+              {result.map((item, index) => (
+                <li key={index} className="text-blue-600 hover:underline">
+                  <a href={item.url} target="_blank" rel="noopener noreferrer">
+                    {item.url}
+                  </a>
+                </li>
+              ))}
+            </ul>
           ) : (
-            <p className="mt-2 text-gray-700">No similar sources found.</p>
+            <p className="mt-2 text-gray-700">No plagiarism sources found.</p>
           )}
         </div>
       )}
