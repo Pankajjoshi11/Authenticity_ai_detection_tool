@@ -18,7 +18,7 @@ from flask_pymongo import PyMongo
 
 
 app = Flask(__name__)
-app.config["MONGO_URI"] = "mongodb+srv://kuwarsarthak711:NqNS3a5sKP6EhtCC@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority"
+app.config["MONGO_URI"] = "mongodb+srv://<username>:<password>@papers.srhpdkr.mongodb.net/papers?retryWrites=true&w=majority"
 CORS(app)  # Enable CORS for all routes
 try:
     mongo = PyMongo(app)
